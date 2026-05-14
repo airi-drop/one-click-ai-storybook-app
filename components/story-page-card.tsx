@@ -1,4 +1,5 @@
 import Image from "next/image";
+import type { ReactNode } from "react";
 
 type DisplayStoryPage = {
   page: number;
@@ -15,9 +16,10 @@ type StoryPageCardProps = {
   generatedImageUrl?: string;
   isSelected?: boolean;
   onSelect?: () => void;
+  children?: ReactNode;
 };
 
-export function StoryPageCard({ storyPage, generatedImageUrl, isSelected = false, onSelect }: StoryPageCardProps) {
+export function StoryPageCard({ storyPage, generatedImageUrl, isSelected = false, onSelect, children }: StoryPageCardProps) {
   const totalPages = storyPage.totalPages ?? 5;
 
   return (
@@ -74,6 +76,7 @@ export function StoryPageCard({ storyPage, generatedImageUrl, isSelected = false
             <span key={index} className={`h-2.5 rounded-full ${index + 1 === storyPage.page ? "w-8 bg-[#7C5CBF]" : "w-2.5 bg-[#EDE6FA]"}`} />
           ))}
         </div>
+        {children}
       </div>
     </article>
   );

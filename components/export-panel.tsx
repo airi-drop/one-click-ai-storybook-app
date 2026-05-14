@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { storyPages } from "@/lib/mock-data";
-import { generatedStoryStorageKey, isGeneratedStorybook, type GeneratedStorybook } from "@/lib/storybook";
+import {
+  generatedStoryStorageKey,
+  isGeneratedStorybook,
+  isUploadedPageImages,
+  type GeneratedStorybook,
+  type UploadedPageImage,
+  uploadedPageImagesStorageKey,
+} from "@/lib/storybook";
 
 type ExportPage = {
   pageNumber: number;
@@ -15,6 +22,9 @@ type ExportStory = {
   title: string;
   pages: ExportPage[];
 };
+
+type ApprovedImageMap = Record<number, UploadedPageImage>;
+type PdfPart = string | Uint8Array<ArrayBuffer>;
 
 const digitalExportOption = {
   id: "digital",
@@ -134,6 +144,75 @@ function buildSimplePdf(story: ExportStory) {
   return new Blob([pdf], { type: "application/pdf" });
 }
 
+function dataUrlToBytes(dataUrl: string): Uint8Array<ArrayBuffer> {
+  const base64 = dataUrl.split(",")[1] ?? "";
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
+function canvasToJpegBytes(canvas: HTMLCanvasElement): Uint8Array<ArrayBuffer> {
+  return dataUrlToBytes(canvas.toDataURL("image/jpeg", 0.92));
+}
+
+function buildImagePdf(jpegPages: Uint8Array<ArrayBuffer>[]) {
+  const pageObjectNumbers = jpegPages.map((_, index) => 5 + index * 3);
+  const parts: BlobPart[] = [];
+  const offsets = [0];
+  let pdfLength = 0;
+
+  function append(part: PdfPart) {
+    parts.push(part);
+    pdfLength += typeof part === "string" ? part.length : part.byteLength;
+  }
+
+  function appendObject(objectNumber: number, objectParts: PdfPart[]) {
+    offsets[objectNumber] = pdfLength;
+    append(`${objectNumber} 0 obj\n`);
+    objectParts.forEach(append);
+    append("\nendobj\n");
+  }
+
+  append("%PDF-1.4\n");
+  appendObject(1, ["<< /Type /Catalog /Pages 2 0 R >>"]);
+  appendObject(2, [`<< /Type /Pages /Kids [${pageObjectNumbers.map((objectNumber) => `${objectNumber} 0 R`).join(" ")}] /Count ${pageObjectNumbers.length} >>`]);
+
+  jpegPages.forEach((jpegBytes, index) => {
+    const contentObjectNumber = 3 + index * 3;
+    const imageObjectNumber = 4 + index * 3;
+    const pageObjectNumber = 5 + index * 3;
+    const imageName = `Im${index + 1}`;
+    const content = `q ${pageSize} 0 0 ${pageSize} 0 0 cm /${imageName} Do Q`;
+
+    appendObject(contentObjectNumber, [`<< /Length ${content.length} >>\nstream\n${content}\nendstream`]);
+    appendObject(imageObjectNumber, [
+      `<< /Type /XObject /Subtype /Image /Width ${pageSize} /Height ${pageSize} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpegBytes.length} >>\nstream\n`,
+      jpegBytes,
+      "\nendstream",
+    ]);
+    appendObject(pageObjectNumber, [
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageSize} ${pageSize}] /Resources << /XObject << /${imageName} ${imageObjectNumber} 0 R >> >> >> /Contents ${contentObjectNumber} 0 R >>`,
+    ]);
+  });
+
+  const xrefOffset = pdfLength;
+  const objectCount = 2 + jpegPages.length * 3;
+  append(`xref\n0 ${objectCount + 1}\n0000000000 65535 f \n`);
+
+  for (let objectNumber = 1; objectNumber <= objectCount; objectNumber += 1) {
+    append(`${String(offsets[objectNumber]).padStart(10, "0")} 00000 n \n`);
+  }
+
+  append(`trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+
+  return new Blob(parts, { type: "application/pdf" });
+}
+
 function drawWrappedText(context: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines: number) {
   const words = normalizePdfText(text).split(" ").filter(Boolean);
   let line = "";
@@ -157,7 +236,49 @@ function drawWrappedText(context: CanvasRenderingContext2D, text: string, x: num
   }
 }
 
-function drawStoryPageCanvas(context: CanvasRenderingContext2D, story: ExportStory, page?: ExportPage, includeText = true) {
+function loadCanvasImage(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Approved image could not be loaded."));
+    image.src = dataUrl;
+  });
+}
+
+function drawCoverImage(context: CanvasRenderingContext2D, image: HTMLImageElement) {
+  const size = 464;
+  const x = 128;
+  const y = 128;
+  const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
+  const width = image.naturalWidth * scale;
+  const height = image.naturalHeight * scale;
+
+  context.save();
+  context.beginPath();
+  context.roundRect(x, y, size, size, 36);
+  context.clip();
+  context.drawImage(image, x + (size - width) / 2, y + (size - height) / 2, width, height);
+  context.restore();
+}
+
+function drawApprovedPageImage(context: CanvasRenderingContext2D, image: HTMLImageElement) {
+  const x = 92;
+  const y = 148;
+  const width = 536;
+  const height = 306;
+  const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+  const drawnWidth = image.naturalWidth * scale;
+  const drawnHeight = image.naturalHeight * scale;
+
+  context.save();
+  context.beginPath();
+  context.roundRect(x, y, width, height, 34);
+  context.clip();
+  context.drawImage(image, x + (width - drawnWidth) / 2, y + (height - drawnHeight) / 2, drawnWidth, drawnHeight);
+  context.restore();
+}
+
+async function drawStoryPageCanvas(context: CanvasRenderingContext2D, story: ExportStory, page?: ExportPage, includeText = true, approvedImage?: UploadedPageImage) {
   const gradient = context.createLinearGradient(0, 0, pageSize, pageSize);
   gradient.addColorStop(0, "#FDF8F0");
   gradient.addColorStop(0.5, "#FEF0EB");
@@ -170,33 +291,39 @@ function drawStoryPageCanvas(context: CanvasRenderingContext2D, story: ExportSto
   context.roundRect(pageMargin, pageMargin, pageSize - pageMargin * 2, pageSize - pageMargin * 2, 42);
   context.fill();
 
-  const artGradient = context.createLinearGradient(92, 148, 628, 454);
-  artGradient.addColorStop(0, "#C5A4E8");
-  artGradient.addColorStop(0.55, "#F28B6E");
-  artGradient.addColorStop(1, "#E8B84B");
-  context.fillStyle = artGradient;
-  context.beginPath();
-  context.roundRect(92, 148, 536, 306, 34);
-  context.fill();
+  if (approvedImage) {
+    const loadedImage = await loadCanvasImage(approvedImage.dataUrl);
+    if (page) drawApprovedPageImage(context, loadedImage);
+    else drawCoverImage(context, loadedImage);
+  } else {
+    const artGradient = context.createLinearGradient(92, 148, 628, 454);
+    artGradient.addColorStop(0, "#C5A4E8");
+    artGradient.addColorStop(0.55, "#F28B6E");
+    artGradient.addColorStop(1, "#E8B84B");
+    context.fillStyle = artGradient;
+    context.beginPath();
+    context.roundRect(92, 148, 536, 306, 34);
+    context.fill();
 
-  context.fillStyle = "rgba(255,255,255,0.25)";
-  context.beginPath();
-  context.arc(178, 222, 64, 0, Math.PI * 2);
-  context.fill();
-  context.beginPath();
-  context.arc(570, 392, 82, 0, Math.PI * 2);
-  context.fill();
+    context.fillStyle = "rgba(255,255,255,0.25)";
+    context.beginPath();
+    context.arc(178, 222, 64, 0, Math.PI * 2);
+    context.fill();
+    context.beginPath();
+    context.arc(570, 392, 82, 0, Math.PI * 2);
+    context.fill();
 
-  context.fillStyle = "rgba(255,255,255,0.42)";
-  context.beginPath();
-  context.arc(238, 284, 44, 0, Math.PI * 2);
-  context.fill();
-  context.beginPath();
-  context.arc(364, 284, 68, 0, Math.PI * 2);
-  context.fill();
-  context.beginPath();
-  context.arc(486, 284, 44, 0, Math.PI * 2);
-  context.fill();
+    context.fillStyle = "rgba(255,255,255,0.42)";
+    context.beginPath();
+    context.arc(238, 284, 44, 0, Math.PI * 2);
+    context.fill();
+    context.beginPath();
+    context.arc(364, 284, 68, 0, Math.PI * 2);
+    context.fill();
+    context.beginPath();
+    context.arc(486, 284, 44, 0, Math.PI * 2);
+    context.fill();
+  }
 
   if (!includeText) return;
 
@@ -223,7 +350,7 @@ function canvasToPngBlob(canvas: HTMLCanvasElement) {
   });
 }
 
-async function createPngFiles(story: ExportStory) {
+async function createPngFiles(story: ExportStory, approvedImages: ApprovedImageMap) {
   const canvas = document.createElement("canvas");
   canvas.width = pageSize;
   canvas.height = pageSize;
@@ -231,12 +358,12 @@ async function createPngFiles(story: ExportStory) {
 
   if (!context) throw new Error("Canvas is not available.");
 
-  drawStoryPageCanvas(context, story, undefined, true);
+  await drawStoryPageCanvas(context, story, undefined, true, approvedImages[1]);
   const files = [{ name: "cover.png", data: await canvasToPngBlob(canvas) }];
 
   for (const page of story.pages) {
     context.clearRect(0, 0, pageSize, pageSize);
-    drawStoryPageCanvas(context, story, page, false);
+    await drawStoryPageCanvas(context, story, page, true, approvedImages[page.pageNumber]);
     files.push({ name: `page-${String(page.pageNumber).padStart(2, "0")}.png`, data: await canvasToPngBlob(canvas) });
   }
 
@@ -381,6 +508,44 @@ function getStoredExportStory() {
   return createFallbackStory();
 }
 
+function getApprovedImages(): ApprovedImageMap {
+  const savedImages = localStorage.getItem(uploadedPageImagesStorageKey);
+  if (!savedImages) return {};
+
+  try {
+    const parsedImages = JSON.parse(savedImages);
+    if (!isUploadedPageImages(parsedImages)) return {};
+
+    return parsedImages.reduce<ApprovedImageMap>((images, image) => {
+      if (image.status === "approved") images[image.pageNumber] = image;
+      return images;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
+async function buildCanvasPdf(story: ExportStory, approvedImages: ApprovedImageMap) {
+  const canvas = document.createElement("canvas");
+  canvas.width = pageSize;
+  canvas.height = pageSize;
+  const context = canvas.getContext("2d");
+
+  if (!context) throw new Error("Canvas is not available.");
+
+  const jpegPages: Uint8Array<ArrayBuffer>[] = [];
+  await drawStoryPageCanvas(context, story, undefined, true, approvedImages[1]);
+  jpegPages.push(canvasToJpegBytes(canvas));
+
+  for (const page of story.pages) {
+    context.clearRect(0, 0, pageSize, pageSize);
+    await drawStoryPageCanvas(context, story, page, true, approvedImages[page.pageNumber]);
+    jpegPages.push(canvasToJpegBytes(canvas));
+  }
+
+  return buildImagePdf(jpegPages);
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -400,21 +565,26 @@ function fileSafeName(value: string) {
 export function ExportPanel() {
   const [status, setStatus] = useState<"idle" | "downloading-pdf" | "downloading-png" | "success" | "error">("idle");
   const [story, setStory] = useState<ExportStory>(() => createFallbackStory());
+  const [approvedImages, setApprovedImages] = useState<ApprovedImageMap>({});
   const [lastExport, setLastExport] = useState<"PDF" | "PNG ZIP">("PDF");
 
   useEffect(() => {
-    const storageTimer = window.setTimeout(() => setStory(getStoredExportStory()), 0);
+    const storageTimer = window.setTimeout(() => {
+      setStory(getStoredExportStory());
+      setApprovedImages(getApprovedImages());
+    }, 0);
     return () => window.clearTimeout(storageTimer);
   }, []);
 
   const pageCount = useMemo(() => story.pages.length, [story.pages.length]);
+  const approvedImageCount = useMemo(() => Object.keys(approvedImages).length, [approvedImages]);
 
   function handleDownload() {
     setStatus("downloading-pdf");
 
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
       try {
-        const pdf = buildSimplePdf(story);
+        const pdf = approvedImageCount > 0 ? await buildCanvasPdf(story, approvedImages) : buildSimplePdf(story);
         downloadBlob(pdf, `${fileSafeName(story.title)}.pdf`);
         setLastExport("PDF");
         setStatus("success");
@@ -429,7 +599,7 @@ export function ExportPanel() {
     setStatus("downloading-png");
 
     try {
-      const pngFiles = await createPngFiles(story);
+      const pngFiles = await createPngFiles(story, approvedImages);
       const zip = await buildZip(pngFiles);
       downloadBlob(zip, `${fileSafeName(story.title)}-pages.zip`);
       setLastExport("PNG ZIP");
@@ -464,6 +634,7 @@ export function ExportPanel() {
           <h2 className="font-serif text-2xl font-black text-[#3A2D52]">{digitalExportOption.title}</h2>
           <p className="mt-3 text-sm leading-7 text-[#6B5B8A]">{digitalExportOption.description}</p>
           <p className="mt-4 text-sm font-black text-[#3A2D52]">{story.title}</p>
+          <p className="mt-2 text-sm font-bold text-[#4CA87A]">{approvedImageCount} approved uploaded image{approvedImageCount === 1 ? "" : "s"} ready for export</p>
           <ul className="mt-5 space-y-2 text-sm font-bold text-[#6B5B8A]">
             {digitalExportOption.features.map((feature) => (
               <li key={feature}>✓ {feature}</li>

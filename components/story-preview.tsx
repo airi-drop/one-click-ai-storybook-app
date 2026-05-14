@@ -1,17 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ButtonLink } from "@/components/button-link";
 import { PageHeader } from "@/components/page-header";
 import { StoryPageCard } from "@/components/story-page-card";
 import { storyPages } from "@/lib/mock-data";
 import {
-  generatedPageImageStorageKey,
   generatedStoryStorageKey,
-  isGeneratedPageImage,
   isGeneratedStorybook,
-  type GeneratedPageImage,
+  isUploadedPageImages,
   type GeneratedStorybook,
+  type UploadedPageImage,
+  uploadedPageImagesStorageKey,
 } from "@/lib/storybook";
 
 type PreviewStoryPage = {
@@ -24,6 +24,8 @@ type PreviewStoryPage = {
   totalPages: number;
 };
 
+const googleFlowUrl = "https://labs.google/flow";
+
 function getPageImagePrompt(storyPage: PreviewStoryPage) {
   return (
     storyPage.sceneDescription ??
@@ -31,24 +33,33 @@ function getPageImagePrompt(storyPage: PreviewStoryPage) {
   );
 }
 
+function replacePageImage(images: UploadedPageImage[], nextImage: UploadedPageImage) {
+  return [...images.filter((image) => image.pageNumber !== nextImage.pageNumber), nextImage].sort((left, right) => left.pageNumber - right.pageNumber);
+}
+
+function saveUploadedPageImages(images: UploadedPageImage[]) {
+  localStorage.setItem(uploadedPageImagesStorageKey, JSON.stringify(images));
+}
+
 export function StoryPreview() {
   const [generatedStory, setGeneratedStory] = useState<GeneratedStorybook | null>(null);
   const [selectedPage, setSelectedPage] = useState(1);
-  const [generatedImage, setGeneratedImage] = useState<GeneratedPageImage | null>(null);
+  const [uploadedImages, setUploadedImages] = useState<UploadedPageImage[]>([]);
   const [imageError, setImageError] = useState("");
-  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [imageMessage, setImageMessage] = useState("");
+  const uploadInputs = useRef<Record<number, HTMLInputElement | null>>({});
 
   useEffect(() => {
     const storageTimer = window.setTimeout(() => {
       const savedStory = localStorage.getItem(generatedStoryStorageKey);
-      const savedImage = localStorage.getItem(generatedPageImageStorageKey);
+      const savedImages = localStorage.getItem(uploadedPageImagesStorageKey);
 
-      if (savedImage) {
+      if (savedImages) {
         try {
-          const parsedImage = JSON.parse(savedImage);
-          if (isGeneratedPageImage(parsedImage)) setGeneratedImage(parsedImage);
+          const parsedImages = JSON.parse(savedImages);
+          if (isUploadedPageImages(parsedImages)) setUploadedImages(parsedImages);
         } catch {
-          setGeneratedImage(null);
+          setUploadedImages([]);
         }
       }
 
@@ -93,48 +104,107 @@ export function StoryPreview() {
     : previewPages[0]?.page ?? 1;
   const selectedStoryPage = previewPages.find((page) => page.page === activeSelectedPage) ?? previewPages[0];
   const selectedImagePrompt = selectedStoryPage ? getPageImagePrompt(selectedStoryPage) : "";
-  const selectedGeneratedImage =
-    generatedImage?.pageNumber === selectedStoryPage?.page && generatedImage.prompt === selectedImagePrompt
-      ? generatedImage
-      : null;
+  const selectedUploadedImage = uploadedImages.find((image) => image.pageNumber === selectedStoryPage?.page && image.prompt === selectedImagePrompt);
 
-  async function handleGenerateTestImage() {
-    if (!selectedStoryPage || !selectedImagePrompt) return;
-
-    setImageError("");
-    setIsGeneratingImage(true);
-
+  async function copyPromptToClipboard(prompt: string) {
     try {
-      const response = await fetch("/api/storybooks/images/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pageNumber: selectedStoryPage.page,
-          prompt: selectedImagePrompt,
-        }),
-      });
+      await navigator.clipboard.writeText(prompt);
+      return true;
+    } catch {
+      const textArea = document.createElement("textarea");
+      textArea.value = prompt;
+      textArea.setAttribute("readonly", "");
+      textArea.style.position = "fixed";
+      textArea.style.left = "-9999px";
+      document.body.appendChild(textArea);
+      textArea.select();
+      const copied = document.execCommand("copy");
+      textArea.remove();
+      return copied;
+    }
+  }
 
-      const payload = (await response.json()) as { image?: unknown; error?: string };
+  async function handleCopyPrompt(storyPage: PreviewStoryPage) {
+    setImageError("");
+    const copied = await copyPromptToClipboard(getPageImagePrompt(storyPage));
+    setImageMessage(copied ? `Prompt copied for page ${storyPage.page}.` : "Prompt could not be copied automatically. Select the prompt text and copy it manually.");
+  }
 
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Image generation failed.");
+  function handleOpenGoogleFlow(storyPage: PreviewStoryPage) {
+    setImageError("");
+    void copyPromptToClipboard(getPageImagePrompt(storyPage)).then((copied) => {
+      setImageMessage(copied ? `Prompt copied for page ${storyPage.page}. Google Flow opened in a new tab.` : "Google Flow opened. Copy the prompt manually if the browser blocked clipboard access.");
+    });
+    window.open(googleFlowUrl, "_blank", "noopener,noreferrer");
+  }
+
+  function handleUploadClick(pageNumber: number) {
+    uploadInputs.current[pageNumber]?.click();
+  }
+
+  function handleUploadImage(storyPage: PreviewStoryPage, event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setImageError("Upload an image file for the selected page.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string" || !reader.result.startsWith("data:image/")) {
+        setImageError("The uploaded image could not be read.");
+        return;
       }
 
-      if (!isGeneratedPageImage(payload.image)) {
-        throw new Error("Image generation returned an unexpected response.");
-      }
-
-      setGeneratedImage(payload.image);
+      const nextImage: UploadedPageImage = {
+        pageNumber: storyPage.page,
+        prompt: getPageImagePrompt(storyPage),
+        dataUrl: reader.result,
+        fileName: file.name,
+        mimeType: file.type,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      };
+      const nextImages = replacePageImage(uploadedImages, nextImage);
 
       try {
-        localStorage.setItem(generatedPageImageStorageKey, JSON.stringify(payload.image));
+        saveUploadedPageImages(nextImages);
+        setUploadedImages(nextImages);
+        setImageError("");
+        setImageMessage(`Uploaded ${file.name} for page ${storyPage.page}. Approve it when it is ready for export.`);
       } catch {
-        setImageError("Image generated, but it could not be saved in localStorage. The image may be too large.");
+        setImageError("The image was uploaded, but it is too large to store in localStorage. Try a smaller PNG or JPG.");
       }
-    } catch (error) {
-      setImageError(error instanceof Error ? error.message : "Image generation failed.");
-    } finally {
-      setIsGeneratingImage(false);
+    };
+    reader.onerror = () => setImageError("The uploaded image could not be read.");
+    reader.readAsDataURL(file);
+  }
+
+  function handleApproveImage(storyPage: PreviewStoryPage) {
+    const currentImage = uploadedImages.find((image) => image.pageNumber === storyPage.page && image.prompt === getPageImagePrompt(storyPage));
+
+    if (!currentImage) {
+      setImageError(`Upload an image for page ${storyPage.page} before approving it.`);
+      return;
+    }
+
+    const nextImage: UploadedPageImage = {
+      ...currentImage,
+      status: "approved",
+      approvedAt: new Date().toISOString(),
+    };
+    const nextImages = replacePageImage(uploadedImages, nextImage);
+
+    try {
+      saveUploadedPageImages(nextImages);
+      setUploadedImages(nextImages);
+      setImageError("");
+      setImageMessage(`Page ${storyPage.page} image approved for preview and export.`);
+    } catch {
+      setImageError("The approved image could not be saved locally.");
     }
   }
 
@@ -145,8 +215,8 @@ export function StoryPreview() {
         title={generatedStory?.title ?? "Kiko dan Bintang Ajaib"}
         description={
           generatedStory
-            ? `Karakter utama: ${generatedStory.characterBible.name}. Cerita ini dibuat dengan Gemini; ilustrasi masih memakai mock visual untuk MVP.`
-            : "Empat halaman contoh dari storybook mock. Ilustrasi dibuat dengan gradient dan emoji agar tetap frontend-only tanpa asset eksternal."
+            ? `Karakter utama: ${generatedStory.characterBible.name}. Cerita ini dibuat dengan Gemini; ilustrasi memakai mock visual sampai gambar eksternal diunggah dan disetujui.`
+            : "Empat halaman contoh dari storybook mock. Ilustrasi mock tetap tersedia, dan gambar eksternal bisa diunggah per halaman."
         }
       />
 
@@ -173,20 +243,13 @@ export function StoryPreview() {
       <section className="mb-8 rounded-[2rem] bg-white/70 p-6 shadow-xl shadow-[#7C5CBF]/10 backdrop-blur">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-[#F28B6E]">Image MVP</p>
-            <h2 className="mt-2 font-serif text-2xl font-black text-[#3A2D52]">Generate one test image</h2>
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-[#F28B6E]">External Image Tool</p>
+            <h2 className="mt-2 font-serif text-2xl font-black text-[#3A2D52]">Image Studio per page</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-[#6B5B8A]">
-              Uses the selected page prompt only. Mock illustrations stay visible until an image is generated.
+              Copy a page prompt, create the image in Google Flow, upload the finished image here, then approve it for preview and export. The app does not call a backend image API.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleGenerateTestImage}
-            disabled={isGeneratingImage}
-            className="rounded-full bg-[#7C5CBF] px-6 py-3 text-sm font-black text-white shadow-lg shadow-[#7C5CBF]/20 transition hover:-translate-y-0.5 hover:bg-[#6B4FA8] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
-          >
-            {isGeneratingImage ? "Generating..." : "Generate Test Image"}
-          </button>
+          <span className="rounded-full bg-[#E8F7EF] px-4 py-2 text-sm font-black text-[#4CA87A]">Cost-free image mode</span>
         </div>
         <div className="mt-5 flex flex-wrap gap-2">
           {previewPages.map((page) => (
@@ -196,6 +259,7 @@ export function StoryPreview() {
               onClick={() => {
                 setSelectedPage(page.page);
                 setImageError("");
+                setImageMessage("");
               }}
               className={`h-10 rounded-full px-4 text-sm font-black transition ${
                 page.page === activeSelectedPage
@@ -207,11 +271,12 @@ export function StoryPreview() {
             </button>
           ))}
         </div>
-        {selectedGeneratedImage ? (
+        {selectedUploadedImage?.status === "approved" ? (
           <p className="mt-4 text-sm font-bold text-[#4CA87A]">
-            Generated image loaded for page {selectedGeneratedImage.pageNumber} using {selectedGeneratedImage.model}.
+            Approved uploaded image loaded for page {selectedUploadedImage.pageNumber}: {selectedUploadedImage.fileName}.
           </p>
         ) : null}
+        {imageMessage ? <p className="mt-4 text-sm font-bold text-[#4CA87A]">{imageMessage}</p> : null}
         {imageError ? (
           <p className="mt-4 rounded-2xl bg-[#FEF0EB] p-4 text-sm font-bold leading-6 text-[#B94E38]">{imageError}</p>
         ) : null}
@@ -219,11 +284,9 @@ export function StoryPreview() {
 
       <div className="space-y-8 lg:space-y-6">
         {previewPages.map((storyPage) => {
-          const imageUrl =
-            generatedImage?.pageNumber === storyPage.page &&
-            generatedImage.prompt === getPageImagePrompt(storyPage)
-              ? generatedImage.dataUrl
-              : undefined;
+          const imagePrompt = getPageImagePrompt(storyPage);
+          const uploadedImage = uploadedImages.find((image) => image.pageNumber === storyPage.page && image.prompt === imagePrompt);
+          const imageUrl = uploadedImage?.status === "approved" ? uploadedImage.dataUrl : undefined;
 
           return (
             <StoryPageCard
@@ -234,8 +297,55 @@ export function StoryPreview() {
               onSelect={() => {
                 setSelectedPage(storyPage.page);
                 setImageError("");
+                setImageMessage("");
               }}
-            />
+            >
+              <div className="mt-7 rounded-2xl bg-[#F8F4FB] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-[#F28B6E]">Image Studio</p>
+                    <p className="mt-1 text-sm font-bold text-[#6B5B8A]">
+                      {uploadedImage ? `${uploadedImage.fileName} - ${uploadedImage.status === "approved" ? "approved" : "waiting approval"}` : "Mock fallback active"}
+                    </p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1 text-xs font-black ${uploadedImage?.status === "approved" ? "bg-[#E8F7EF] text-[#4CA87A]" : "bg-white text-[#A096B5]"}`}>
+                    {uploadedImage?.status === "approved" ? "Approved" : "Needs upload"}
+                  </span>
+                </div>
+                <div className="mt-4 rounded-xl bg-white/85 p-3">
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-[#7C5CBF]">Generated image prompt</p>
+                  <p className="mt-2 max-h-32 overflow-auto text-sm leading-6 text-[#6B5B8A]">{imagePrompt}</p>
+                </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <button type="button" onClick={() => handleCopyPrompt(storyPage)} className="rounded-full bg-white px-4 py-3 text-sm font-black text-[#7C5CBF] shadow-sm transition hover:-translate-y-0.5">
+                    Copy Prompt
+                  </button>
+                  <button type="button" onClick={() => handleOpenGoogleFlow(storyPage)} className="rounded-full bg-[#7C5CBF] px-4 py-3 text-sm font-black text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#6B4FA8]">
+                    Open Google Flow
+                  </button>
+                  <button type="button" onClick={() => handleUploadClick(storyPage.page)} className="rounded-full bg-white px-4 py-3 text-sm font-black text-[#7C5CBF] shadow-sm transition hover:-translate-y-0.5">
+                    Upload Image
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApproveImage(storyPage)}
+                    disabled={!uploadedImage || uploadedImage.status === "approved"}
+                    className="rounded-full bg-[#F28B6E] px-4 py-3 text-sm font-black text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0"
+                  >
+                    Approve Image
+                  </button>
+                </div>
+                <input
+                  ref={(element) => {
+                    uploadInputs.current[storyPage.page] = element;
+                  }}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(event) => handleUploadImage(storyPage, event)}
+                />
+              </div>
+            </StoryPageCard>
           );
         })}
       </div>

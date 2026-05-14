@@ -24,17 +24,20 @@ export type GeneratedStorybook = {
   pages: GeneratedStoryPage[];
 };
 
-export type GeneratedPageImage = {
+export type UploadedPageImage = {
   pageNumber: number;
   prompt: string;
   dataUrl: string;
-  model: string;
+  fileName: string;
+  mimeType: string;
+  status: "pending" | "approved";
   createdAt: string;
+  approvedAt?: string;
 };
 
 export const draftStorageKey = "storybook-draft";
 export const generatedStoryStorageKey = "storybook-generated";
-export const generatedPageImageStorageKey = "storybook-generated-page-image";
+export const uploadedPageImagesStorageKey = "storybook-uploaded-page-images";
 
 export function isGeneratedStorybook(value: unknown): value is GeneratedStorybook {
   if (!value || typeof value !== "object") return false;
@@ -64,10 +67,10 @@ export function isGeneratedStorybook(value: unknown): value is GeneratedStoryboo
   );
 }
 
-export function isGeneratedPageImage(value: unknown): value is GeneratedPageImage {
+export function isUploadedPageImage(value: unknown): value is UploadedPageImage {
   if (!value || typeof value !== "object") return false;
 
-  const image = value as GeneratedPageImage;
+  const image = value as UploadedPageImage;
 
   return (
     Number.isInteger(image.pageNumber) &&
@@ -76,9 +79,17 @@ export function isGeneratedPageImage(value: unknown): value is GeneratedPageImag
     image.prompt.trim().length > 0 &&
     typeof image.dataUrl === "string" &&
     image.dataUrl.startsWith("data:image/") &&
-    typeof image.model === "string" &&
-    image.model.trim().length > 0 &&
+    typeof image.fileName === "string" &&
+    image.fileName.trim().length > 0 &&
+    typeof image.mimeType === "string" &&
+    image.mimeType.startsWith("image/") &&
+    (image.status === "pending" || image.status === "approved") &&
     typeof image.createdAt === "string" &&
-    image.createdAt.trim().length > 0
+    image.createdAt.trim().length > 0 &&
+    (image.approvedAt === undefined || (typeof image.approvedAt === "string" && image.approvedAt.trim().length > 0))
   );
+}
+
+export function isUploadedPageImages(value: unknown): value is UploadedPageImage[] {
+  return Array.isArray(value) && value.every(isUploadedPageImage);
 }
