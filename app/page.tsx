@@ -5,10 +5,10 @@ import { creationSteps, features, showcaseBooks } from "@/lib/mock-data";
 export default function Home() {
   return (
     <main>
-      <section className="relative overflow-hidden px-6 py-20 text-center sm:py-28">
+      <section className="relative overflow-hidden px-6 py-20 text-center sm:py-28 lg:px-8 lg:py-24">
         <div className="absolute left-[-5rem] top-[-5rem] h-80 w-80 rounded-full bg-[#A07FD6]/20 blur-2xl" />
         <div className="absolute right-[-4rem] top-10 h-56 w-56 rounded-full bg-[#F28B6E]/20 blur-2xl" />
-        <div className="relative mx-auto max-w-4xl">
+        <div className="relative mx-auto max-w-4xl lg:max-w-[820px]">
           <p className="mb-5 text-sm font-black uppercase tracking-[0.3em] text-[#F28B6E]">Mock storybook generator</p>
           <h1 className="font-serif text-5xl font-black leading-[1.04] tracking-[-0.055em] text-[#3A2D52] sm:text-7xl">
             Buat storybook ajaib dalam satu klik.
@@ -24,20 +24,20 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-6 py-14">
+      <section className="mx-auto max-w-6xl px-6 py-14 lg:max-w-5xl lg:px-8 lg:py-12 xl:max-w-[1080px]">
         <h2 className="mb-10 text-center font-serif text-4xl font-black tracking-[-0.04em] text-[#3A2D52]">Contoh dunia cerita</h2>
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-3 lg:gap-5">
           {showcaseBooks.map((book) => (
             <BookCover key={book.title} book={book} />
           ))}
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-6 py-14">
-        <div className="rounded-[2.5rem] bg-white/70 p-6 shadow-xl shadow-[#7C5CBF]/10 backdrop-blur sm:p-10">
-          <div className="grid gap-5 md:grid-cols-3">
+      <section className="mx-auto max-w-6xl px-6 py-14 lg:max-w-5xl lg:px-8 lg:py-12 xl:max-w-[1080px]">
+        <div className="rounded-[2.5rem] bg-white/70 p-6 shadow-xl shadow-[#7C5CBF]/10 backdrop-blur sm:p-10 lg:p-8">
+          <div className="grid gap-5 md:grid-cols-3 lg:gap-4">
             {creationSteps.map((step) => (
-              <article key={step.number} className="rounded-[2rem] bg-[#FDF8F0] p-6">
+              <article key={step.number} className="rounded-[2rem] bg-[#FDF8F0] p-6 lg:p-5">
                 <div className="mb-5 flex items-center justify-between">
                   <span className="text-4xl">{step.icon}</span>
                   <span className="font-serif text-3xl font-black text-[#EDE6FA]">{step.number}</span>
@@ -50,8 +50,8 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-6 py-14 pb-24">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="mx-auto max-w-6xl px-6 py-14 pb-24 lg:max-w-5xl lg:px-8 lg:py-12 lg:pb-24 xl:max-w-[1080px]">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-5">
           {features.map((feature) => (
             <article key={feature.title} className="rounded-[1.5rem] bg-white p-5 shadow-lg shadow-[#7C5CBF]/10">
               <div className="mb-3 text-3xl">{feature.icon}</div>

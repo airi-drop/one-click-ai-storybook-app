@@ -2,6 +2,20 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+Create a local environment file:
+
+```bash
+cp .env.example .env.local
+```
+
+Then add your Gemini API key:
+
+```bash
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+The key is used only by the server-side route at `/api/storybooks/generate` and is never exposed to the browser.
+
 First, run the development server:
 
 ```bash

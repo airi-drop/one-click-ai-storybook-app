@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ageOptions, characterSuggestions, moodOptions, themeSuggestions, visualStyles } from "@/lib/mock-data";
+import { draftStorageKey, generatedStoryStorageKey } from "@/lib/storybook";
 
 type FormState = {
   tema: string;
@@ -58,9 +59,23 @@ export function GenerateForm() {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<FormState>(initialForm);
+  const [isGenerating, setIsGenerating] = useState(false);
   const totalSteps = 3;
 
   const update = (key: keyof FormState, value: string) => setForm((current) => ({ ...current, [key]: value }));
+
+  function handleGenerate() {
+    setIsGenerating(true);
+    localStorage.removeItem(generatedStoryStorageKey);
+    localStorage.setItem(
+      draftStorageKey,
+      JSON.stringify({
+        ...form,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    router.push("/loading");
+  }
 
   return (
     <div>
@@ -196,8 +211,13 @@ export function GenerateForm() {
             Lanjut →
           </button>
         ) : (
-          <button type="button" onClick={() => router.push("/loading")} className="rounded-full bg-gradient-to-r from-[#7C5CBF] to-[#A07FD6] px-7 py-3 text-sm font-black text-white shadow-lg shadow-[#7C5CBF]/25 transition hover:-translate-y-0.5">
-            🪄 Buat Storybook
+          <button
+            type="button"
+            disabled={isGenerating}
+            onClick={handleGenerate}
+            className="rounded-full bg-gradient-to-r from-[#7C5CBF] to-[#A07FD6] px-7 py-3 text-sm font-black text-white shadow-lg shadow-[#7C5CBF]/25 transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-70"
+          >
+            {isGenerating ? "Menyiapkan..." : "🪄 Buat Storybook"}
           </button>
         )}
       </div>
