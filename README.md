@@ -14,7 +14,19 @@ Then add your Gemini API key:
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-The key is used only by the server-side route at `/api/storybooks/generate` and is never exposed to the browser.
+The key is used only by server-side routes and is never exposed to the browser.
+
+## Imagen image generation MVP
+
+The preview page at `/preview/demo` includes a **Generate Test Image** button. It sends only the currently selected page prompt to `/api/storybooks/images/test`, generates one image, and stores that image temporarily in `localStorage` under `storybook-generated-page-image`.
+
+This MVP uses the Gemini API REST Imagen `predict` endpoint directly instead of adding a Gemini SDK dependency:
+
+- model: `imagen-4.0-fast-generate-001`
+- endpoint: `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-fast-generate-001:predict`
+- output: one base64 image converted to a browser `data:image/...` URL
+
+If Imagen 4 Fast is not enabled for your API key, quota is exhausted, or the prompt is blocked, the UI keeps the mock illustration fallback and shows the Imagen error. The image route is separate from `/api/storybooks/generate`, so story text generation still uses the existing Gemini story model.
 
 First, run the development server:
 

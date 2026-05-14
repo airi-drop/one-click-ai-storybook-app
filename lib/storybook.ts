@@ -24,8 +24,17 @@ export type GeneratedStorybook = {
   pages: GeneratedStoryPage[];
 };
 
+export type GeneratedPageImage = {
+  pageNumber: number;
+  prompt: string;
+  dataUrl: string;
+  model: string;
+  createdAt: string;
+};
+
 export const draftStorageKey = "storybook-draft";
 export const generatedStoryStorageKey = "storybook-generated";
+export const generatedPageImageStorageKey = "storybook-generated-page-image";
 
 export function isGeneratedStorybook(value: unknown): value is GeneratedStorybook {
   if (!value || typeof value !== "object") return false;
@@ -52,5 +61,24 @@ export function isGeneratedStorybook(value: unknown): value is GeneratedStoryboo
         typeof page.sceneDescription === "string" &&
         page.sceneDescription.trim().length > 0,
     )
+  );
+}
+
+export function isGeneratedPageImage(value: unknown): value is GeneratedPageImage {
+  if (!value || typeof value !== "object") return false;
+
+  const image = value as GeneratedPageImage;
+
+  return (
+    Number.isInteger(image.pageNumber) &&
+    image.pageNumber > 0 &&
+    typeof image.prompt === "string" &&
+    image.prompt.trim().length > 0 &&
+    typeof image.dataUrl === "string" &&
+    image.dataUrl.startsWith("data:image/") &&
+    typeof image.model === "string" &&
+    image.model.trim().length > 0 &&
+    typeof image.createdAt === "string" &&
+    image.createdAt.trim().length > 0
   );
 }
